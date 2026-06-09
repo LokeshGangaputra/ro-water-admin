@@ -49,7 +49,8 @@ export default function AdminPortal() {
   const [auditCansSum, setAuditCansSum] = useState(0);
   const [auditLitersSum, setAuditLitersSum] = useState(0);
   const [auditRevenueSum, setAuditRevenueSum] = useState(0);
-  const [customAuditRate, setCustomAuditRate] = useState(''); // NEW: Custom Rate Override
+  const [customAuditRate, setCustomAuditRate] = useState(''); // Custom Rate Override State
+  const [historyFilterDate, setHistoryFilterDate] = useState(''); // Live Logs Custom Date Filter State
 
   const [stats, setStats] = useState({ daily: { v: 0, e: 0 }, weekly: { v: 0, e: 0 }, monthly: { v: 0, e: 0 } });
 
@@ -242,7 +243,7 @@ export default function AdminPortal() {
     const today = getLocalISODateString(new Date());
     setAuditStartDate(today);
     setAuditEndDate(today);
-    setCustomAuditRate(''); // Reset custom rate when opening new audit
+    setCustomAuditRate(''); 
     setActiveSubPanel('audit');
   };
 
@@ -250,6 +251,12 @@ export default function AdminPortal() {
     const now = new Date();
     return allDeliveries.filter(log => {
       const date = new Date(log.created_at);
+      
+      // Prioritize custom logs view table date specification if active
+      if (historyFilterDate) {
+        return getLocalISODateString(date) === historyFilterDate;
+      }
+      
       if (viewMode === 'daily') return getLocalISODateString(date) === getLocalISODateString(now);
       if (viewMode === 'weekly') return date >= new Date(now.setDate(now.getDate() - 7));
       return getLocalISODateString(date) >= cycleStartDate;
@@ -280,15 +287,22 @@ export default function AdminPortal() {
   };
 
   const handleRemoveDeliveryLog = async (id) => {
+    if (!id) return;
     if (window.confirm("⚠️ PERMANENT ACTION: Are you sure you want to delete this log?")) {
       try {
+        // Optimistic local storage arrays removal slice to visually update view instantly
+        setAuditLedgerRecords(prev => prev.filter(item => item.id !== id));
+        setAllDeliveries(prev => prev.filter(item => item.id !== id));
+
         const { error } = await supabase.from('deliveries').delete().eq('id', id);
         if (error) throw error;
+        
         triggerNotification("Record deleted successfully.");
         await fetchData();
       } catch (err) {
         console.error("Deletion failed:", err);
         alert(`Failed to delete record: ${err.message}`);
+        fetchData(); // Rollback if server rejects
       }
     }
   };
@@ -311,7 +325,6 @@ export default function AdminPortal() {
       if (error) throw error;
       triggerNotification("Driver added!"); setNewDriverName(''); fetchData();
     } catch (err) {
-      // Offline Failsafe
       const queue = JSON.parse(localStorage.getItem('offline_drivers') || '[]');
       queue.push({ name: newDriverName.trim(), status: 'inactive', _local_timestamp: Date.now() });
       localStorage.setItem('offline_drivers', JSON.stringify(queue));
@@ -329,7 +342,6 @@ export default function AdminPortal() {
       if (error) throw error;
       triggerNotification("Client saved safely!"); setNewCompanyName(''); setNewCompanyRate('20'); fetchData();
     } catch (err) {
-      // Offline Failsafe
       const queue = JSON.parse(localStorage.getItem('offline_companies') || '[]');
       queue.push({ name: newCompanyName.trim(), rate_per_can: parseFloat(newCompanyRate), liters_per_can: 20, _local_timestamp: Date.now() });
       localStorage.setItem('offline_companies', JSON.stringify(queue));
@@ -353,7 +365,7 @@ export default function AdminPortal() {
     const logsToPrint = activeSubPanel === 'audit' ? auditLedgerRecords : getFilteredLogs();
 
     if (logsToPrint.length === 0) {
-      alert(`No delivery details found for ${auditMeta.name} between ${formatDateToDDMMYYYY(auditStartDate)} and ${formatDateToDDMMYYYY(auditEndDate)}.`);
+      alert(`No delivery details found for ${auditMeta.name}.`);
       return;
     }
 
@@ -368,9 +380,10 @@ export default function AdminPortal() {
       if (activeSubPanel === 'audit') {
         doc.text(`Cumulative Statement: ${auditMeta.name}`, 14, 28);
         doc.text(`Filtered Bounds: ${formatDateToDDMMYYYY(auditStartDate)} to ${formatDateToDDMMYYYY(auditEndDate)}`, 14, 34);
-        if (customAuditRate) doc.text(`* Billed at Custom Override Rate: Rs. ${customAuditRate}/Can`, 14, 40);
+        if (customAuditRate) doc.text(`* Custom Statement Override Rate Applied: Rs. ${customAuditRate}/Can`, 14, 40);
       } else {
         doc.text(`Overview Report: ${viewMode.toUpperCase()}`, 14, 28);
+        if (historyFilterDate) doc.text(`Date Target Log: ${formatDateToDDMMYYYY(historyFilterDate)}`, 14, 34);
       }
 
       const dataRows = logsToPrint.map(log => {
@@ -380,7 +393,7 @@ export default function AdminPortal() {
         const compObject = log.companies || {};
         const driverObject = log.drivers || {};
         
-        // 🟢 NEW CUSTOM RATE OVERRIDE LOGIC FOR PDF
+        // Compute dynamically if statement custom rate is keyed
         const rate = (activeSubPanel === 'audit' && customAuditRate) 
             ? parseFloat(customAuditRate) 
             : (compObject.rate_per_can ? parseFloat(compObject.rate_per_can) : 20);
@@ -410,7 +423,7 @@ export default function AdminPortal() {
       doc.text(`Total Aggregated Dispatched: ${sumCans.toFixed(1)} Cans (${sumLiters.toLocaleString()} L)`, 14, finalY + 12);
       doc.text(`Net Statement Billing: Rs. ${sumAmount.toLocaleString()}.00`, 14, finalY + 18);
 
-      doc.save(`Report_${activeSubPanel === 'audit' ? auditMeta.name : viewMode}.pdf`);
+      doc.save(`Report_${activeSubPanel === 'audit' ? auditMeta.name : (historyFilterDate ? historyFilterDate : viewMode)}.pdf`);
       triggerNotification("Report compiled correctly!");
     } catch (pdfErr) {
       console.error("PDF Engine Exception:", pdfErr);
@@ -499,7 +512,7 @@ export default function AdminPortal() {
           <h3 style={{ margin: '0 0 4px 0', fontSize: '24px', fontWeight: '900', color: '#0f172a' }}>Statement Audit: <span style={{ color: '#0284c7' }}>{t('names.' + auditMeta.name, auditMeta.name)}</span></h3>
           <p style={{ margin: '0 0 28px 0', fontSize: '13.5px', color: '#64748b', fontWeight: '500' }}>Change dates below to filter data. The PDF bill will strictly match your selection.</p>
 
-          {/* 🟢 NEW CUSTOM RATE OVERRIDE INPUT */}
+          {/* 🟢 CUSTOM RATE OVERRIDE INPUT FIELD CONTROL GRID */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', backgroundColor: '#f8fafc', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', marginBottom: '28px' }}>
             <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '800', color: '#64748b', marginBottom: '6px' }}>START DATE (BILL FROM)</label><input type="date" value={auditStartDate} onChange={e => setAuditStartDate(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: '10px', border: '1px solid #cbd5e1', fontWeight: '700', color: '#0f172a' }} /></div>
             <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '800', color: '#64748b', marginBottom: '6px' }}>END DATE (BILL TO)</label><input type="date" value={auditEndDate} onChange={e => setAuditEndDate(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: '10px', border: '1px solid #cbd5e1', fontWeight: '700', color: '#0f172a' }} /></div>
@@ -509,8 +522,6 @@ export default function AdminPortal() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '32px' }}>
             <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '16px 20px', borderRadius: '16px' }}><div style={{ fontSize: '11px', fontWeight: '800', color: '#166534' }}>NET QUANTITY DELIVERED</div><div style={{ fontSize: '24px', fontWeight: '900', color: '#14532d', marginTop: '6px' }}>{auditCansSum.toFixed(1)} Cans</div></div>
             <div style={{ backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', padding: '16px 20px', borderRadius: '16px' }}><div style={{ fontSize: '11px', fontWeight: '800', color: '#0369a1' }}>VOLUME OUTPUT LOGGED</div><div style={{ fontSize: '24px', fontWeight: '900', color: '#0c4a6e', marginTop: '6px' }}>{auditLitersSum.toLocaleString()} L</div></div>
-            
-            {/* 🟢 NEW DYNAMIC BILLING CARD */}
             <div style={{ backgroundColor: '#fff7ed', border: '1px solid #fed7aa', padding: '16px 20px', borderRadius: '16px' }}>
               <div style={{ fontSize: '11px', fontWeight: '800', color: '#c2410c' }}>FILTERED BILLING AMOUNT</div>
               <div style={{ fontSize: '24px', fontWeight: '900', color: '#7c2d12', marginTop: '6px' }}>
@@ -527,7 +538,6 @@ export default function AdminPortal() {
                   <th style={{ padding: '14px 20px' }}>{auditMeta.type === 'driver' ? 'Client Destination' : 'Fleet Driver'}</th>
                   <th style={{ padding: '14px 24px' }}>Shift Cycle</th>
                   <th style={{ padding: '14px 20px' }}>Volume Supplied</th>
-                  {/* 🟢 ACTION HEADER */}
                   <th style={{ padding: '14px 20px' }}>Action</th>
                 </tr>
               </thead>
@@ -547,8 +557,6 @@ export default function AdminPortal() {
                         <td style={{ padding: '12px 20px', fontWeight: '800' }}>{auditMeta.type === 'driver' ? `🏢 ${t('names.' + compObject?.name, compObject?.name)}` : `👤 ${t('names.' + driverObject?.name, driverObject?.name)}`}</td>
                         <td style={{ padding: '12px 20px' }}><span style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', backgroundColor: log.shift === 'Morning' ? '#fff7ed' : '#f0fdf4', color: log.shift === 'Morning' ? '#c2410c' : '#15803d' }}>{log.shift}</span></td>
                         <td style={{ padding: '12px 20px', fontWeight: '800', color: '#0f172a' }}>{cVol.toFixed(1)} Cans <span style={{ opacity: 0.5, fontSize: '11px' }}>({(cVol * 20).toFixed(0)} L)</span></td>
-                        
-                        {/* 🟢 DELETE BUTTON INSIDE TABLE */}
                         <td style={{ padding: '12px 20px' }}>
                           <button onClick={() => handleRemoveDeliveryLog(log.id)} style={{ padding: '6px 12px', border: '1px solid #fecdd3', borderRadius: '8px', backgroundColor: '#fff5f5', color: '#e11d48', fontSize: '11px', cursor: 'pointer', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px' }}>
                             <Trash2 size={12} /> Delete
@@ -700,10 +708,32 @@ export default function AdminPortal() {
             </div>
           </div>
 
+          {/* 📋 LIVE VERIFICATION HISTORY LOGS CARD WITH FILTER BY DATE OPTIONS */}
           <div style={{ backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '24px', overflow: 'hidden' }}>
-            <div style={{ padding: '24px', borderBottom: '1px solid #f1f5f9', backgroundColor: '#fafafa', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ padding: '24px', borderBottom: '1px solid #f1f5f9', backgroundColor: '#fafafa', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
               <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800' }}>Live Verification History Logs</h3>
-              <button onClick={generateCumulativeSummaryInvoice} style={{ padding: '8px 16px', borderRadius: '12px', backgroundColor: '#0284c7', color: '#ffffff', fontWeight: '700', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}><Download size={14} /> Download {viewMode} Report</button>
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <label style={{ fontSize: '12px', fontWeight: '700', color: '#64748b' }}>Filter Date:</label>
+                <input 
+                  type="date" 
+                  value={historyFilterDate} 
+                  onChange={e => setHistoryFilterDate(e.target.value)} 
+                  style={{ padding: '6px 12px', borderRadius: '10px', border: '1px solid #cbd5e1', fontWeight: '700', fontSize: '13px', color: '#0f172a', outline: 'none' }} 
+                />
+                {historyFilterDate && (
+                  <button 
+                    onClick={() => setHistoryFilterDate('')} 
+                    style={{ padding: '6px 12px', border: '1px solid #fecdd3', borderRadius: '10px', backgroundColor: '#fff5f5', color: '#e11d48', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                  >
+                    Clear Filter
+                  </button>
+                )}
+                
+                <button onClick={generateCumulativeSummaryInvoice} style={{ padding: '8px 16px', borderRadius: '12px', backgroundColor: '#0284c7', color: '#ffffff', fontWeight: '700', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Download size={14} /> Download {historyFilterDate ? 'Filtered' : viewMode} Report
+                </button>
+              </div>
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
               <thead><tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #cbd5e1' }}><th style={{ padding: '14px 24px' }}>Timestamp Specification</th><th style={{ padding: '14px 24px' }}>Fleet Driver</th><th style={{ padding: '14px 24px' }}>Client Destination Facility</th><th style={{ padding: '14px 24px' }}>Shift</th><th style={{ padding: '14px 24px' }}>Cans Poured</th><th style={{ padding: '14px 24px' }}>Admin Action</th></tr></thead>
