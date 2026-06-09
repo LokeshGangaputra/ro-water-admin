@@ -49,6 +49,7 @@ export default function AdminPortal() {
   const [auditCansSum, setAuditCansSum] = useState(0);
   const [auditLitersSum, setAuditLitersSum] = useState(0);
   const [auditRevenueSum, setAuditRevenueSum] = useState(0);
+  const [customAuditRate, setCustomAuditRate] = useState(''); // NEW: Custom Rate Override
 
   const [stats, setStats] = useState({ daily: { v: 0, e: 0 }, weekly: { v: 0, e: 0 }, monthly: { v: 0, e: 0 } });
 
@@ -241,6 +242,7 @@ export default function AdminPortal() {
     const today = getLocalISODateString(new Date());
     setAuditStartDate(today);
     setAuditEndDate(today);
+    setCustomAuditRate(''); // Reset custom rate when opening new audit
     setActiveSubPanel('audit');
   };
 
@@ -366,6 +368,7 @@ export default function AdminPortal() {
       if (activeSubPanel === 'audit') {
         doc.text(`Cumulative Statement: ${auditMeta.name}`, 14, 28);
         doc.text(`Filtered Bounds: ${formatDateToDDMMYYYY(auditStartDate)} to ${formatDateToDDMMYYYY(auditEndDate)}`, 14, 34);
+        if (customAuditRate) doc.text(`* Billed at Custom Override Rate: Rs. ${customAuditRate}/Can`, 14, 40);
       } else {
         doc.text(`Overview Report: ${viewMode.toUpperCase()}`, 14, 28);
       }
@@ -376,7 +379,12 @@ export default function AdminPortal() {
         
         const compObject = log.companies || {};
         const driverObject = log.drivers || {};
-        const rate = compObject.rate_per_can ? parseFloat(compObject.rate_per_can) : 20;
+        
+        // 🟢 NEW CUSTOM RATE OVERRIDE LOGIC FOR PDF
+        const rate = (activeSubPanel === 'audit' && customAuditRate) 
+            ? parseFloat(customAuditRate) 
+            : (compObject.rate_per_can ? parseFloat(compObject.rate_per_can) : 20);
+            
         const cansCount = parseFloat(log.cans_delivered) || 0;
 
         sumCans += cansCount; sumLiters += (cansCount * 20); sumAmount += (cansCount * rate);
@@ -392,7 +400,7 @@ export default function AdminPortal() {
       });
 
       autoTable(doc, {
-        startY: 42,
+        startY: activeSubPanel === 'audit' && customAuditRate ? 46 : 42,
         head: [['Date', activeSubPanel === 'audit' && auditMeta.type === 'company' ? 'Operated By' : 'Destination', 'Shift', 'Cans', 'Volume', 'Amount']],
         body: dataRows,
       });
@@ -491,15 +499,24 @@ export default function AdminPortal() {
           <h3 style={{ margin: '0 0 4px 0', fontSize: '24px', fontWeight: '900', color: '#0f172a' }}>Statement Audit: <span style={{ color: '#0284c7' }}>{t('names.' + auditMeta.name, auditMeta.name)}</span></h3>
           <p style={{ margin: '0 0 28px 0', fontSize: '13.5px', color: '#64748b', fontWeight: '500' }}>Change dates below to filter data. The PDF bill will strictly match your selection.</p>
 
+          {/* 🟢 NEW CUSTOM RATE OVERRIDE INPUT */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', backgroundColor: '#f8fafc', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', marginBottom: '28px' }}>
             <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '800', color: '#64748b', marginBottom: '6px' }}>START DATE (BILL FROM)</label><input type="date" value={auditStartDate} onChange={e => setAuditStartDate(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: '10px', border: '1px solid #cbd5e1', fontWeight: '700', color: '#0f172a' }} /></div>
             <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '800', color: '#64748b', marginBottom: '6px' }}>END DATE (BILL TO)</label><input type="date" value={auditEndDate} onChange={e => setAuditEndDate(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: '10px', border: '1px solid #cbd5e1', fontWeight: '700', color: '#0f172a' }} /></div>
+            <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '800', color: '#0284c7', marginBottom: '6px' }}>CUSTOM RATE OVERRIDE (₹/CAN)</label><input type="number" placeholder="Leave empty for default" value={customAuditRate} onChange={e => setCustomAuditRate(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: '10px', border: '2px dashed #bae6fd', fontWeight: '700', color: '#0284c7' }} /></div>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '32px' }}>
             <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '16px 20px', borderRadius: '16px' }}><div style={{ fontSize: '11px', fontWeight: '800', color: '#166534' }}>NET QUANTITY DELIVERED</div><div style={{ fontSize: '24px', fontWeight: '900', color: '#14532d', marginTop: '6px' }}>{auditCansSum.toFixed(1)} Cans</div></div>
             <div style={{ backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', padding: '16px 20px', borderRadius: '16px' }}><div style={{ fontSize: '11px', fontWeight: '800', color: '#0369a1' }}>VOLUME OUTPUT LOGGED</div><div style={{ fontSize: '24px', fontWeight: '900', color: '#0c4a6e', marginTop: '6px' }}>{auditLitersSum.toLocaleString()} L</div></div>
-            <div style={{ backgroundColor: '#fff7ed', border: '1px solid #fed7aa', padding: '16px 20px', borderRadius: '16px' }}><div style={{ fontSize: '11px', fontWeight: '800', color: '#c2410c' }}>FILTERED BILLING AMOUNT</div><div style={{ fontSize: '24px', fontWeight: '900', color: '#7c2d12', marginTop: '6px' }}>₹{auditRevenueSum.toLocaleString()}.00</div></div>
+            
+            {/* 🟢 NEW DYNAMIC BILLING CARD */}
+            <div style={{ backgroundColor: '#fff7ed', border: '1px solid #fed7aa', padding: '16px 20px', borderRadius: '16px' }}>
+              <div style={{ fontSize: '11px', fontWeight: '800', color: '#c2410c' }}>FILTERED BILLING AMOUNT</div>
+              <div style={{ fontSize: '24px', fontWeight: '900', color: '#7c2d12', marginTop: '6px' }}>
+                ₹{(customAuditRate ? (auditCansSum * parseFloat(customAuditRate)) : auditRevenueSum).toLocaleString()}.00
+              </div>
+            </div>
           </div>
 
           <div style={{ border: '1px solid #cbd5e1', borderRadius: '16px', overflow: 'hidden' }}>
@@ -510,11 +527,13 @@ export default function AdminPortal() {
                   <th style={{ padding: '14px 20px' }}>{auditMeta.type === 'driver' ? 'Client Destination' : 'Fleet Driver'}</th>
                   <th style={{ padding: '14px 24px' }}>Shift Cycle</th>
                   <th style={{ padding: '14px 20px' }}>Volume Supplied</th>
+                  {/* 🟢 ACTION HEADER */}
+                  <th style={{ padding: '14px 20px' }}>Action</th>
                 </tr>
               </thead>
               <tbody style={{ color: '#334155', fontWeight: '600' }}>
                 {auditLedgerRecords.length === 0 ? (
-                  <tr><td colSpan="4" style={{ padding: '32px', textAlign: 'center', color: '#94a3b8' }}>No delivery details found between {formatDateToDDMMYYYY(auditStartDate)} and {formatDateToDDMMYYYY(auditEndDate)}.</td></tr>
+                  <tr><td colSpan="5" style={{ padding: '32px', textAlign: 'center', color: '#94a3b8' }}>No delivery details found between {formatDateToDDMMYYYY(auditStartDate)} and {formatDateToDDMMYYYY(auditEndDate)}.</td></tr>
                 ) : (
                   auditLedgerRecords.map(log => {
                     const d = new Date(log.created_at);
@@ -528,6 +547,13 @@ export default function AdminPortal() {
                         <td style={{ padding: '12px 20px', fontWeight: '800' }}>{auditMeta.type === 'driver' ? `🏢 ${t('names.' + compObject?.name, compObject?.name)}` : `👤 ${t('names.' + driverObject?.name, driverObject?.name)}`}</td>
                         <td style={{ padding: '12px 20px' }}><span style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', backgroundColor: log.shift === 'Morning' ? '#fff7ed' : '#f0fdf4', color: log.shift === 'Morning' ? '#c2410c' : '#15803d' }}>{log.shift}</span></td>
                         <td style={{ padding: '12px 20px', fontWeight: '800', color: '#0f172a' }}>{cVol.toFixed(1)} Cans <span style={{ opacity: 0.5, fontSize: '11px' }}>({(cVol * 20).toFixed(0)} L)</span></td>
+                        
+                        {/* 🟢 DELETE BUTTON INSIDE TABLE */}
+                        <td style={{ padding: '12px 20px' }}>
+                          <button onClick={() => handleRemoveDeliveryLog(log.id)} style={{ padding: '6px 12px', border: '1px solid #fecdd3', borderRadius: '8px', backgroundColor: '#fff5f5', color: '#e11d48', fontSize: '11px', cursor: 'pointer', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <Trash2 size={12} /> Delete
+                          </button>
+                        </td>
                       </tr>
                     );
                   })
