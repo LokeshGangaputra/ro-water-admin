@@ -49,8 +49,10 @@ export default function AdminPortal() {
   const [auditCansSum, setAuditCansSum] = useState(0);
   const [auditLitersSum, setAuditLitersSum] = useState(0);
   const [auditRevenueSum, setAuditRevenueSum] = useState(0);
-  const [customAuditRate, setCustomAuditRate] = useState(''); // Custom Rate Override State
-  const [historyFilterDate, setHistoryFilterDate] = useState(''); // Live Logs Custom Date Filter State
+  const [customAuditRate, setCustomAuditRate] = useState(''); 
+  
+  // 🟢 NEW STATE: Custom Date Filter for Live History Logs
+  const [historyFilterDate, setHistoryFilterDate] = useState(''); 
 
   const [stats, setStats] = useState({ daily: { v: 0, e: 0 }, weekly: { v: 0, e: 0 }, monthly: { v: 0, e: 0 } });
 
@@ -247,12 +249,12 @@ export default function AdminPortal() {
     setActiveSubPanel('audit');
   };
 
+  // 🚀 UPDATED FILTER LOGIC: Checks if the new custom date filter is active
   const getFilteredLogs = () => {
     const now = new Date();
     return allDeliveries.filter(log => {
       const date = new Date(log.created_at);
       
-      // Prioritize custom logs view table date specification if active
       if (historyFilterDate) {
         return getLocalISODateString(date) === historyFilterDate;
       }
@@ -290,7 +292,6 @@ export default function AdminPortal() {
     if (!id) return;
     if (window.confirm("⚠️ PERMANENT ACTION: Are you sure you want to delete this log?")) {
       try {
-        // Optimistic local storage arrays removal slice to visually update view instantly
         setAuditLedgerRecords(prev => prev.filter(item => item.id !== id));
         setAllDeliveries(prev => prev.filter(item => item.id !== id));
 
@@ -302,7 +303,7 @@ export default function AdminPortal() {
       } catch (err) {
         console.error("Deletion failed:", err);
         alert(`Failed to delete record: ${err.message}`);
-        fetchData(); // Rollback if server rejects
+        fetchData(); 
       }
     }
   };
@@ -365,7 +366,7 @@ export default function AdminPortal() {
     const logsToPrint = activeSubPanel === 'audit' ? auditLedgerRecords : getFilteredLogs();
 
     if (logsToPrint.length === 0) {
-      alert(`No delivery details found for ${auditMeta.name}.`);
+      alert(`No delivery details found.`);
       return;
     }
 
@@ -383,7 +384,7 @@ export default function AdminPortal() {
         if (customAuditRate) doc.text(`* Custom Statement Override Rate Applied: Rs. ${customAuditRate}/Can`, 14, 40);
       } else {
         doc.text(`Overview Report: ${viewMode.toUpperCase()}`, 14, 28);
-        if (historyFilterDate) doc.text(`Date Target Log: ${formatDateToDDMMYYYY(historyFilterDate)}`, 14, 34);
+        if (historyFilterDate) doc.text(`Target Date: ${formatDateToDDMMYYYY(historyFilterDate)}`, 14, 34);
       }
 
       const dataRows = logsToPrint.map(log => {
@@ -393,7 +394,6 @@ export default function AdminPortal() {
         const compObject = log.companies || {};
         const driverObject = log.drivers || {};
         
-        // Compute dynamically if statement custom rate is keyed
         const rate = (activeSubPanel === 'audit' && customAuditRate) 
             ? parseFloat(customAuditRate) 
             : (compObject.rate_per_can ? parseFloat(compObject.rate_per_can) : 20);
@@ -512,7 +512,6 @@ export default function AdminPortal() {
           <h3 style={{ margin: '0 0 4px 0', fontSize: '24px', fontWeight: '900', color: '#0f172a' }}>Statement Audit: <span style={{ color: '#0284c7' }}>{t('names.' + auditMeta.name, auditMeta.name)}</span></h3>
           <p style={{ margin: '0 0 28px 0', fontSize: '13.5px', color: '#64748b', fontWeight: '500' }}>Change dates below to filter data. The PDF bill will strictly match your selection.</p>
 
-          {/* 🟢 CUSTOM RATE OVERRIDE INPUT FIELD CONTROL GRID */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', backgroundColor: '#f8fafc', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', marginBottom: '28px' }}>
             <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '800', color: '#64748b', marginBottom: '6px' }}>START DATE (BILL FROM)</label><input type="date" value={auditStartDate} onChange={e => setAuditStartDate(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: '10px', border: '1px solid #cbd5e1', fontWeight: '700', color: '#0f172a' }} /></div>
             <div><label style={{ display: 'block', fontSize: '11px', fontWeight: '800', color: '#64748b', marginBottom: '6px' }}>END DATE (BILL TO)</label><input type="date" value={auditEndDate} onChange={e => setAuditEndDate(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: '10px', border: '1px solid #cbd5e1', fontWeight: '700', color: '#0f172a' }} /></div>
@@ -686,7 +685,7 @@ export default function AdminPortal() {
               <form onSubmit={handleAddCompany} style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '24px' }}><input type="text" value={newCompanyName} onChange={e => setNewCompanyName(e.target.value)} placeholder={t('companyPlaceholder')} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} /><input type="number" value={newCompanyRate} onChange={e => setNewCompanyRate(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} /><button type="submit" style={{ width: '100%', padding: '14px', borderRadius: '12px', backgroundColor: '#0284c7', color: '#ffffff', border: 'none', fontWeight: '700', cursor: 'pointer' }}>{t('saveBtn')}</button></form>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '140px', overflowY: 'auto' }}>
                 {companiesList.map(c => (
-                  <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', backgroundColor: '#f0f9ff', border: '1px solid #e0f2fe', borderRadius: '10px' }}>
+                  <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '#8px 12px', backgroundColor: '#f0f9ff', border: '1px solid #e0f2fe', borderRadius: '10px' }}>
                     {editingCompanyId === c.id ? (
                       <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
                         <input type="text" value={updatedCompanyName} onChange={e => setUpdatedCompanyName(e.target.value)} style={{ flex: 1, padding: '4px 8px', borderRadius: '6px', border: '1px solid #0ea5e9', fontSize: '12px', fontWeight: '700' }} />
@@ -708,13 +707,13 @@ export default function AdminPortal() {
             </div>
           </div>
 
-          {/* 📋 LIVE VERIFICATION HISTORY LOGS CARD WITH FILTER BY DATE OPTIONS */}
+          {/* 🟢 LIVE VERIFICATION HISTORY LOGS CARD WITH INTERACTIVE DATE FILTER */}
           <div style={{ backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '24px', overflow: 'hidden' }}>
             <div style={{ padding: '24px', borderBottom: '1px solid #f1f5f9', backgroundColor: '#fafafa', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
               <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800' }}>Live Verification History Logs</h3>
               
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <label style={{ fontSize: '12px', fontWeight: '700', color: '#64748b' }}>Filter Date:</label>
+                <span style={{ fontSize: '12px', fontWeight: '700', color: '#64748b' }}>Select Date:</span>
                 <input 
                   type="date" 
                   value={historyFilterDate} 
@@ -739,7 +738,7 @@ export default function AdminPortal() {
               <thead><tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #cbd5e1' }}><th style={{ padding: '14px 24px' }}>Timestamp Specification</th><th style={{ padding: '14px 24px' }}>Fleet Driver</th><th style={{ padding: '14px 24px' }}>Client Destination Facility</th><th style={{ padding: '14px 24px' }}>Shift</th><th style={{ padding: '14px 24px' }}>Cans Poured</th><th style={{ padding: '14px 24px' }}>Admin Action</th></tr></thead>
               <tbody>
                 {getFilteredLogs().length === 0 ? (
-                  <tr><td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontWeight: '600' }}>No deliveries found for the selected view mode.</td></tr>
+                  <tr><td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontWeight: '600' }}>No deliveries found for the specified parameters.</td></tr>
                 ) : getFilteredLogs().map((delivery) => {
                   const timestamp = new Date(delivery.created_at); const isEditable = (new Date() - timestamp) <= 24 * 60 * 60 * 1000;
                   const dName = delivery.drivers ? delivery.drivers.name : 'Unknown'; const cName = delivery.companies ? delivery.companies.name : 'Unknown';
