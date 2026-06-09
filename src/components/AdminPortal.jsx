@@ -50,8 +50,6 @@ export default function AdminPortal() {
   const [auditLitersSum, setAuditLitersSum] = useState(0);
   const [auditRevenueSum, setAuditRevenueSum] = useState(0);
   const [customAuditRate, setCustomAuditRate] = useState(''); 
-  
-  // 🟢 NEW STATE: Custom Date Filter for Live History Logs
   const [historyFilterDate, setHistoryFilterDate] = useState(''); 
 
   const [stats, setStats] = useState({ daily: { v: 0, e: 0 }, weekly: { v: 0, e: 0 }, monthly: { v: 0, e: 0 } });
@@ -249,7 +247,6 @@ export default function AdminPortal() {
     setActiveSubPanel('audit');
   };
 
-  // 🚀 UPDATED FILTER LOGIC: Checks if the new custom date filter is active
   const getFilteredLogs = () => {
     const now = new Date();
     return allDeliveries.filter(log => {
@@ -553,7 +550,7 @@ export default function AdminPortal() {
                     return (
                       <tr key={log.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                         <td style={{ padding: '12px 20px', fontFamily: 'monospace', color: '#0284c7' }}>{displayDate} — {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-                        <td style={{ padding: '12px 20px', fontWeight: '800' }}>{auditMeta.type === 'driver' ? `🏢 ${t('names.' + compObject?.name, compObject?.name)}` : `👤 ${t('names.' + driverObject?.name, driverObject?.name)}`}</td>
+                        <td style={{ padding: '12px 20px', fontWeight: '800' }}>{t('names.' + compObject?.name, compObject?.name)}</td>
                         <td style={{ padding: '12px 20px' }}><span style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', backgroundColor: log.shift === 'Morning' ? '#fff7ed' : '#f0fdf4', color: log.shift === 'Morning' ? '#c2410c' : '#15803d' }}>{log.shift}</span></td>
                         <td style={{ padding: '12px 20px', fontWeight: '800', color: '#0f172a' }}>{cVol.toFixed(1)} Cans <span style={{ opacity: 0.5, fontSize: '11px' }}>({(cVol * 20).toFixed(0)} L)</span></td>
                         <td style={{ padding: '12px 20px' }}>
@@ -685,7 +682,7 @@ export default function AdminPortal() {
               <form onSubmit={handleAddCompany} style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '24px' }}><input type="text" value={newCompanyName} onChange={e => setNewCompanyName(e.target.value)} placeholder={t('companyPlaceholder')} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} /><input type="number" value={newCompanyRate} onChange={e => setNewCompanyRate(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid #cbd5e1', outline: 'none' }} /><button type="submit" style={{ width: '100%', padding: '14px', borderRadius: '12px', backgroundColor: '#0284c7', color: '#ffffff', border: 'none', fontWeight: '700', cursor: 'pointer' }}>{t('saveBtn')}</button></form>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '140px', overflowY: 'auto' }}>
                 {companiesList.map(c => (
-                  <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '#8px 12px', backgroundColor: '#f0f9ff', border: '1px solid #e0f2fe', borderRadius: '10px' }}>
+                  <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', backgroundColor: '#f0f9ff', border: '1px solid #e0f2fe', borderRadius: '10px' }}>
                     {editingCompanyId === c.id ? (
                       <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
                         <input type="text" value={updatedCompanyName} onChange={e => setUpdatedCompanyName(e.target.value)} style={{ flex: 1, padding: '4px 8px', borderRadius: '6px', border: '1px solid #0ea5e9', fontSize: '12px', fontWeight: '700' }} />
@@ -707,7 +704,7 @@ export default function AdminPortal() {
             </div>
           </div>
 
-          {/* 🟢 LIVE VERIFICATION HISTORY LOGS CARD WITH INTERACTIVE DATE FILTER */}
+          {/* 📋 LIVE VERIFICATION HISTORY LOGS CARD WITH 30-DAY UI TIME WINDOW CONTROL */}
           <div style={{ backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '24px', overflow: 'hidden' }}>
             <div style={{ padding: '24px', borderBottom: '1px solid #f1f5f9', backgroundColor: '#fafafa', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
               <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800' }}>Live Verification History Logs</h3>
@@ -740,7 +737,10 @@ export default function AdminPortal() {
                 {getFilteredLogs().length === 0 ? (
                   <tr><td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontWeight: '600' }}>No deliveries found for the specified parameters.</td></tr>
                 ) : getFilteredLogs().map((delivery) => {
-                  const timestamp = new Date(delivery.created_at); const isEditable = (new Date() - timestamp) <= 24 * 60 * 60 * 1000;
+                  // 🟢 TIMEOUT WINDOW EXTENDED TO 30 DAYS IN THE FRONTEND UI MATRICES BELOW:
+                  const timestamp = new Date(delivery.created_at); 
+                  const isEditable = (new Date() - timestamp) <= 30 * 24 * 60 * 60 * 1000;
+                  
                   const dName = delivery.drivers ? delivery.drivers.name : 'Unknown'; const cName = delivery.companies ? delivery.companies.name : 'Unknown';
                   const cVol = parseFloat(delivery.cans_delivered) || 0;
                   const displayDate = `${String(timestamp.getDate()).padStart(2, '0')}-${String(timestamp.getMonth() + 1).padStart(2, '0')}-${timestamp.getFullYear()}`;
