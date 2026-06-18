@@ -3,7 +3,7 @@ import { supabase } from '../supabaseClient';
 import { useTranslation } from 'react-i18next';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FileText, TrendingUp, Layers, ShieldAlert, UserPlus, Building2, Plus, CheckCircle, User, DollarSign, Calendar, Trash2, Edit3, Save, X, Lock, CheckSquare, Square, Bell, RefreshCw, Eye, ArrowLeft, RotateCcw, Download } from 'lucide-react';
+import { FileText, TrendingUp, Layers, ShieldAlert, UserPlus, Building2, Plus, CheckCircle, User, DollarSign, Calendar, Trash2, Edit3, Save, X, Lock, CheckSquare, Square, Bell, RefreshCw, Eye, ArrowLeft, RotateCcw, Download, Percent } from 'lucide-react';
 
 const getLocalISODateString = (dateObj) => {
   const year = dateObj.getFullYear();
@@ -35,6 +35,15 @@ export default function AdminPortal() {
   const [overdueAlerts, setOverdueAlerts] = useState([]);
 
   const [cycleStartDate, setCycleStartDate] = useState(() => localStorage.getItem('cfg_cycle_start') || getLocalISODateString(new Date()));
+
+  // 🟢 NEW STATES: Dedicated parameters for the Cumulative Accounts Balance Ledger
+  const [ledgerStartDate, setLedgerStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30); // Default window initialized to exactly 1 month backward
+    return getLocalISODateString(d);
+  });
+  const [ledgerEndDate, setLedgerEndDate] = useState(() => getLocalISODateString(new Date()));
+  const [ledgerMetricsSummary, setLedgerMetricsSummary] = useState({ totalCans: 0, totalLiters: 0, totalGross: 0, totalPaid: 0, totalPending: 0, efficiency: 0 });
 
   const [editingCompanyId, setEditingCompanyId] = useState(null);
   const [updatedCompanyName, setUpdatedCompanyName] = useState('');
@@ -73,10 +82,9 @@ export default function AdminPortal() {
     setTimeout(() => setToastMessage(''), 4000); 
   };
 
-  // 🚀 BACKGROUND WORKER: Checks every 30 seconds to upload offline data
+  // 🚀 BACKGROUND WORKER: Synchronizes offline database queues
   useEffect(() => {
     const syncInterval = setInterval(async () => {
-      // Sync Companies
       const compQueue = JSON.parse(localStorage.getItem('offline_companies') || '[]');
       if (compQueue.length > 0) {
         try {
@@ -87,10 +95,9 @@ export default function AdminPortal() {
             triggerNotification("✅ Connection restored: Offline clients synced!");
             fetchData();
           }
-        } catch (e) { /* Still offline/full, try again later */ }
+        } catch (e) {}
       }
 
-      // Sync Drivers
       const drvQueue = JSON.parse(localStorage.getItem('offline_drivers') || '[]');
       if (drvQueue.length > 0) {
         try {
@@ -101,7 +108,7 @@ export default function AdminPortal() {
             triggerNotification("✅ Connection restored: Offline drivers synced!");
             fetchData();
           }
-        } catch (e) { /* Still offline/full, try again later */ }
+        } catch (e) {}
       }
     }, 30000);
 
@@ -123,9 +130,10 @@ export default function AdminPortal() {
     return () => supabase.removeChannel(realTimeBroker);
   }, []);
 
+  // 🟢 WATCH PARAMETERS: Recalculates metrics automatically when any custom ledger bounds shift
   useEffect(() => {
     calculateComprehensiveMetrics(allDeliveries, companiesList, driversList);
-  }, [selectedFilterDate, cycleStartDate, auditMeta, auditStartDate, auditEndDate, viewMode]);
+  }, [selectedFilterDate, cycleStartDate, auditMeta, auditStartDate, auditEndDate, viewMode, ledgerStartDate, ledgerEndDate]);
 
   const fetchLiveGlobalCycleConfig = async () => {
     const { data } = await supabase.from('global_config').select('*').eq('key', 'cycle_start_date').maybeSingle();
@@ -158,8 +166,9 @@ export default function AdminPortal() {
     const driverReportMap = {};
     const singleDayMap = {};
 
+    // Initialize Company Ledger Structures
     companies.forEach(c => {
-      companyReportMap[c.id] = { id: c.id, name: c.name, cans: 0, liters: 0, billing: 0, is_paid: c.is_paid };
+      companyReportMap[c.id] = { id: c.id, name: c.name, cans: 0, liters: 0, billing: 0, is_paid: c.is_paid, rate: c.rate_per_can || 20 };
     });
     drivers.forEach(d => {
       driverReportMap[d.id] = { id: d.id, name: d.name, cans: 0, trips: 0 };
@@ -168,6 +177,7 @@ export default function AdminPortal() {
     let aCans = 0, aLit = 0, aRev = 0;
     const auditFilteredLogs = [];
 
+    // Global Multi-tier Accumulator Loop
     deliveries.forEach(item => {
       const createdDate = new Date(item.created_at);
       const itemDateStr = getLocalISODateString(createdDate); 
@@ -180,16 +190,22 @@ export default function AdminPortal() {
       const volume = cans * litPerCan;
       const earnings = cans * rate;
 
+      // Card Metrics calculations
       if (itemDateStr === todayStr) { t.v += volume; t.e += earnings; }
       if (createdDate >= oneWeekAgo) { w.v += volume; w.e += earnings; }
+      if (itemDateStr >= anchorDateStr) { m.v += volume; m.e += earnings; }
 
-      if (itemDateStr >= anchorDateStr) {
-        m.v += volume; m.e += earnings;
+      // 🟢 PRECISE MATHEMATICAL LEDGER INJECTION MATRIX (Filters logs inside the chosen ledger window)
+      if (itemDateStr >= ledgerStartDate && itemDateStr <= ledgerEndDate) {
         if (item.company_id && companyReportMap[item.company_id]) {
           companyReportMap[item.company_id].cans += cans;
           companyReportMap[item.company_id].liters += volume;
           companyReportMap[item.company_id].billing += earnings;
         }
+      }
+
+      // Driver Performances metrics loop tracking
+      if (itemDateStr >= anchorDateStr) {
         if (item.driver_id && driverReportMap[item.driver_id]) {
           driverReportMap[item.driver_id].cans += cans;
           driverReportMap[item.driver_id].trips += 1;
@@ -215,23 +231,49 @@ export default function AdminPortal() {
 
     setStats({ daily: t, weekly: w, monthly: m });
 
+    // 🟢 COMPUTE ACCURATE BALANCES BASED ON LEDGER SPECIFICATION
     let totalPaid = 0, totalPending = 0;
+    let ledgerCansSum = 0, ledgerLitersSum = 0, ledgerGrossSum = 0, ledgerPaidSum = 0, ledgerPendingSum = 0;
     const overdueList = [];
     const finalCompanyArr = Object.values(companyReportMap);
 
     finalCompanyArr.forEach(comp => {
+      // General overview mapping metrics
       if (comp.is_paid) totalPaid += comp.billing;
       else {
         totalPending += comp.billing;
         if (daysTranspiredInCycle >= 5 && comp.billing > 0) overdueList.push(comp);
       }
+
+      // 🟢 Calculate totals for the ledger summary cards
+      ledgerCansSum += comp.cans;
+      ledgerLitersSum += comp.liters;
+      ledgerGrossSum += comp.billing;
+      
+      if (comp.is_paid) {
+        ledgerPaidSum += comp.billing;
+      } else {
+        ledgerPendingSum += comp.billing;
+      }
     });
+
+    const collectionEfficiency = ledgerGrossSum > 0 ? (ledgerPaidSum / ledgerGrossSum) * 100 : 100;
 
     setFinancialSummary({ paid: totalPaid, pending: totalPending, total: totalPaid + totalPending });
     setOverdueAlerts(overdueList);
     setMonthlyCompanyReport(finalCompanyArr);
     setMonthlyDriverReport(Object.values(driverReportMap));
     setDayFilteredAnalytics(Object.values(singleDayMap));
+    
+    // Set final states for our precision metrics grid
+    setLedgerMetricsSummary({
+      totalCans: ledgerCansSum,
+      totalLiters: ledgerLitersSum,
+      totalGross: ledgerGrossSum,
+      totalPaid: ledgerPaidSum,
+      totalPending: ledgerPendingSum,
+      efficiency: collectionEfficiency
+    });
 
     auditFilteredLogs.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     setAuditLedgerRecords(auditFilteredLogs);
@@ -266,7 +308,7 @@ export default function AdminPortal() {
     const todayStr = getLocalISODateString(new Date());
     if (window.confirm(`Start a new 30-day billing cycle anchored on today (${formatDateToDDMMYYYY(todayStr)})?`)) {
       const { error: cycleError } = await supabase.from('global_config').upsert({ key: 'cycle_start_date', value: todayStr });
-      const { error: resetError } = await supabase.from('companies').update({ is_paid: false }).neq('id', 0);
+      const { error: resetError = {} } = await supabase.from('companies').update({ is_paid: false }).neq('id', 0);
       if (!cycleError && !resetError) {
         setCycleStartDate(todayStr);
         triggerNotification("New global billing cycle deployed successfully!");
@@ -314,7 +356,6 @@ export default function AdminPortal() {
     }
   };
 
-  // 🚀 OFFLINE FALLBACK: Add Driver
   const handleAddDriver = async (e) => {
     e.preventDefault(); if (!newDriverName.trim()) return;
     
@@ -331,7 +372,6 @@ export default function AdminPortal() {
     }
   };
 
-  // 🚀 OFFLINE FALLBACK: Add Company
   const handleAddCompany = async (e) => {
     e.preventDefault(); if (!newCompanyName.trim()) return;
 
@@ -428,26 +468,6 @@ export default function AdminPortal() {
     }
   };
 
-  const runAutomatedThreeMonthMaintenanceCycle = async () => {
-    const ninetyDaysAgo = new Date(); ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-    const logsToPurge = allDeliveries.filter(log => new Date(log.created_at) < ninetyDaysAgo);
-    if (logsToPurge.length === 0) return;
-
-    const doc = new jsPDF();
-    doc.setFont("helvetica", "bold"); doc.text("ARCHIVED HISTORICAL EXPORT (3-MONTH AUTO-PURGE LEDGER)", 14, 20);
-    const rows = logsToPurge.map(log => {
-      const d = new Date(log.created_at);
-      const displayDate = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
-      return [displayDate, log.drivers?.name || 'Unknown', log.companies?.name || 'Unknown', log.shift, `${log.cans_delivered} Cans`];
-    });
-    autoTable(doc, { startY: 32, head: [['Date', 'Driver', 'Client', 'Shift', 'Quantity']], body: rows });
-    doc.save(`RO_Water_AutoArchived_Report_${getLocalISODateString(new Date())}.pdf`);
-
-    const targetIdsToClear = logsToPurge.map(log => log.id);
-    await supabase.from('deliveries').delete().in('id', targetIdsToClear);
-    fetchData();
-  };
-
   const handleSaveCompanyNewName = async (companyId) => {
     if (!updatedCompanyName.trim()) return;
     const { error } = await supabase.from('companies').update({ name: updatedCompanyName.trim() }).eq('id', companyId);
@@ -456,11 +476,6 @@ export default function AdminPortal() {
       setEditingCompanyId(null); setUpdatedCompanyName('');
       fetchData();
     }
-  };
-
-  const handleUpdateCredentials = (e) => {
-    e.preventDefault(); localStorage.setItem('cfg_adm_mail', newAdminEmail.trim()); localStorage.setItem('cfg_adm_key', newAdminPass.trim());
-    triggerNotification("Security parameters updated!");
   };
 
   const handleRemoveDriver = async (id, name) => {
@@ -545,12 +560,10 @@ export default function AdminPortal() {
                     const d = new Date(log.created_at);
                     const displayDate = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
                     const cVol = parseFloat(log.cans_delivered) || 0;
-                    const compObject = log.companies || {};
-                    const driverObject = log.drivers || {};
                     return (
                       <tr key={log.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                         <td style={{ padding: '12px 20px', fontFamily: 'monospace', color: '#0284c7' }}>{displayDate} — {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-                        <td style={{ padding: '12px 20px', fontWeight: '800' }}>{t('names.' + compObject?.name, compObject?.name)}</td>
+                        <td style={{ padding: '12px 20px', fontWeight: '800' }}>{t('names.' + log.companies?.name, log.companies?.name)}</td>
                         <td style={{ padding: '12px 20px' }}><span style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', backgroundColor: log.shift === 'Morning' ? '#fff7ed' : '#f0fdf4', color: log.shift === 'Morning' ? '#c2410c' : '#15803d' }}>{log.shift}</span></td>
                         <td style={{ padding: '12px 20px', fontWeight: '800', color: '#0f172a' }}>{cVol.toFixed(1)} Cans <span style={{ opacity: 0.5, fontSize: '11px' }}>({(cVol * 20).toFixed(0)} L)</span></td>
                         <td style={{ padding: '12px 20px' }}>
@@ -601,31 +614,96 @@ export default function AdminPortal() {
             ))}
           </div>
 
-          <div style={{ backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '24px', overflow: 'hidden', marginBottom: '40px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.01)' }}>
-            <div style={{ padding: '24px', backgroundColor: '#fafafa', borderBottom: '1px solid #f1f5f9' }}>
-              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', color: '#0f172a' }}>Active Billing Cycle Accounts Collection Balance Sheet</h3>
-              <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#94a3b8' }}>Click any client's name link to access their **Separate Analysis 3-Month Statement View**.</p>
+          {/* 🟢 Refactored Segment: Active Billing Cycle Accounts Collection Balance Sheet with Precision 1-Month Analysis */}
+          <div style={{ backgroundColor: '#ffffff', border: '2px solid #0284c7', borderRadius: '24px', overflow: 'hidden', marginBottom: '40px', boxShadow: '0 10px 25px -5px rgba(2,132,199,0.05)' }}>
+            <div style={{ padding: '24px', backgroundColor: '#fafafa', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '900', color: '#0f172a' }}>Active Billing Cycle Accounts Collection Balance Sheet</h3>
+                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748b', fontWeight: '500' }}>Choose timeline below to generate a cumulative ledger for any specified timeframe.</p>
+              </div>
+              
+              {/* Date controller controls inside the card */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '800', color: '#475569' }}>FROM:</span>
+                  <input type="date" value={ledgerStartDate} onChange={e => setLedgerStartDate(e.target.value)} style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontWeight: '700', fontSize: '13px', color: '#0f172a' }} />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '800', color: '#475569' }}>TO:</span>
+                  <input type="date" value={ledgerEndDate} onChange={e => setLedgerEndDate(e.target.value)} style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontWeight: '700', fontSize: '13px', color: '#0f172a' }} />
+                </div>
+              </div>
             </div>
+
+            {/* Precision Accounting Analysis Cards Block */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', padding: '24px', backgroundColor: '#f8fafc', borderBottom: '1px solid #cbd5e1' }}>
+              <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', padding: '12px 16px', borderRadius: '12px' }}>
+                <span style={{ fontSize: '11px', fontWeight: '800', color: '#64748b' }}>TOTAL CANS EXPEDITED</span>
+                <div style={{ fontSize: '18px', fontWeight: '900', color: '#0f172a', marginTop: '4px' }}>{ledgerMetricsSummary.totalCans.toFixed(1)} Units</div>
+              </div>
+              <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', padding: '12px 16px', borderRadius: '12px' }}>
+                <span style={{ fontSize: '11px', fontWeight: '800', color: '#64748b' }}>GROSS BILLING VOLUME</span>
+                <div style={{ fontSize: '18px', fontWeight: '900', color: '#0284c7', marginTop: '4px' }}>₹{ledgerMetricsSummary.totalGross.toLocaleString()}.00</div>
+              </div>
+              <div style={{ backgroundColor: '#e6f4ea', border: '1px solid #a3cfbb', padding: '12px 16px', borderRadius: '12px' }}>
+                <span style={{ fontSize: '11px', fontWeight: '800', color: '#146c43' }}>COLLECTED REVENUE</span>
+                <div style={{ fontSize: '18px', fontWeight: '900', color: '#146c43', marginTop: '4px' }}>₹{ledgerMetricsSummary.totalPaid.toLocaleString()}.00</div>
+              </div>
+              <div style={{ backgroundColor: ledgerMetricsSummary.totalPending > 0 ? '#fce8e6' : '#ffffff', border: `1px solid ${ledgerMetricsSummary.totalPending > 0 ? '#f1aeb5' : '#e2e8f0'}`, padding: '12px 16px', borderRadius: '12px' }}>
+                <span style={{ fontSize: '11px', fontWeight: '800', color: ledgerMetricsSummary.totalPending > 0 ? '#b02a37' : '#64748b' }}>OUTSTANDING BALANCE</span>
+                <div style={{ fontSize: '18px', fontWeight: '900', color: ledgerMetricsSummary.totalPending > 0 ? '#b02a37' : '#0f172a', marginTop: '4px' }}>₹{ledgerMetricsSummary.totalPending.toLocaleString()}.00</div>
+              </div>
+              <div style={{ backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', padding: '12px 16px', borderRadius: '12px' }}>
+                <span style={{ fontSize: '11px', fontWeight: '800', color: '#0369a1' }}>COLLECTION EFFICIENCY</span>
+                <div style={{ fontSize: '18px', fontWeight: '900', color: '#0369a1', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '2px' }}><Percent size={16} /> {ledgerMetricsSummary.efficiency.toFixed(1)}%</div>
+              </div>
+            </div>
+
+            {/* Precision Mathematical Analysis Data Table Grid */}
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px', textAlign: 'left' }}>
-              <thead><tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #cbd5e1' }}><th style={{ padding: '14px 20px' }}>Corporate Client Name</th><th style={{ padding: '14px 20px' }}>Cans Dispatched</th><th style={{ padding: '14px 20px' }}>Liters Supplied</th><th style={{ padding: '14px 20px' }}>Statement Balance</th><th style={{ padding: '14px 20px' }}>Invoice Settle Actions</th></tr></thead>
+              <thead>
+                <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #cbd5e1', color: '#475569' }}>
+                  <th style={{ padding: '14px 20px' }}>Corporate Client Name</th>
+                  <th style={{ padding: '14px 20px' }}>Volume Logs</th>
+                  <th style={{ padding: '14px 20px' }}>Gross Billing</th>
+                  <th style={{ padding: '14px 20px' }}>Amount Received (Paid)</th>
+                  <th style={{ padding: '14px 20px' }}>Balance Due (Pending)</th>
+                  <th style={{ padding: '14px 20px' }}>Settle State Toggle</th>
+                </tr>
+              </thead>
               <tbody style={{ color: '#334155', fontWeight: '600' }}>
                 {monthlyCompanyReport.length > 0 ? monthlyCompanyReport.map((company, idx) => {
-                  const isOverdue = new Date().getDate() >= 6 && !company.is_paid && company.billing > 0;
+                  const hasDataInPeriod = company.cans > 0;
                   return (
-                    <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: isOverdue ? '#fff5f5' : 'transparent' }}>
-                      <td onClick={() => launchDeepAuditPanel('company', company.id, company.name)} style={{ padding: '14px 20px', fontWeight: '800', color: isOverdue ? '#b91c1c' : '#0284c7', cursor: 'pointer', textDecoration: 'underline', display: 'inline-flex', alignItems: 'center', gap: '4px' }}><Eye size={14} /> {t('names.' + company.name, company.name)}</td>
-                      <td style={{ padding: '14px 20px' }}>{company.cans.toFixed(1)} Cans</td>
-                      <td style={{ padding: '14px 20px' }}>{company.liters.toFixed(0)} L</td>
-                      <td style={{ padding: '14px 20px', fontWeight: '900', color: company.is_paid ? '#059669' : '#b91c1c', fontSize: '15px' }}>₹{company.billing.toLocaleString()}.00</td>
+                    <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9', opacity: hasDataInPeriod ? 1 : 0.6, backgroundColor: !company.is_paid && company.billing > 0 ? '#fffdfa' : 'transparent' }}>
+                      <td onClick={() => launchDeepAuditPanel('company', company.id, company.name)} style={{ padding: '14px 20px', fontWeight: '800', color: '#0284c7', cursor: 'pointer', textDecoration: 'underline' }}>
+                        🏢 {t('names.' + company.name, company.name)} <span style={{ fontStyle: 'italic', fontSize: '11px', fontWeight: '500', color: '#64748b' }}>(₹{company.rate}/can)</span>
+                      </td>
+                      <td style={{ padding: '14px 20px' }}>
+                        <div>{company.cans.toFixed(1)} Cans</div>
+                        <div style={{ opacity: 0.5, fontSize: '11px', fontWeight: '500' }}>{company.liters.toLocaleString()} Liters</div>
+                      </td>
+                      <td style={{ padding: '14px 20px', fontWeight: '700' }}>₹{company.billing.toLocaleString()}.00</td>
+                      
+                      {/* Amount Received Column Calculation */}
+                      <td style={{ padding: '14px 20px', color: '#166534' }}>
+                        ₹{company.is_paid ? company.billing.toLocaleString() : '0'}.00
+                      </td>
+                      
+                      {/* 🟢 Precision Request: If paid, show zero pending explicitly */}
+                      <td style={{ padding: '14px 20px', fontWeight: '800', color: company.is_paid ? '#94a3b8' : '#b91c1c' }}>
+                        ₹{company.is_paid ? '0' : company.billing.toLocaleString()}.00
+                      </td>
+                      
                       <td style={{ padding: '14px 20px' }}>
                         <div onClick={() => toggleCompanyPaymentStatus(company.id, company.is_paid)} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', backgroundColor: company.is_paid ? '#e6f4ea' : '#fce8e6', padding: '6px 12px', borderRadius: '10px', border: `1px solid ${company.is_paid ? '#a3cfbb' : '#f1aeb5'}` }}>
                           {company.is_paid ? <CheckSquare size={15} style={{ color: '#146c43' }} /> : <Square size={15} style={{ color: '#b02a37' }} />}
-                          <span style={{ fontSize: '12px', fontWeight: '800', color: company.is_paid ? '#146c43' : '#b02a37' }}>{company.is_paid ? 'Settled' : 'Mark Paid'}</span>
+                          <span style={{ fontSize: '12px', fontWeight: '800', color: company.is_paid ? '#146c43' : '#b02a37' }}>{company.is_paid ? 'Settled' : 'Unpaid'}</span>
                         </div>
                       </td>
                     </tr>
                   );
-                }) : <tr><td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No clients found.</td></tr>}
+                }) : <tr><td colSpan="6" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No ledger entries found inside selected parameters.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -737,7 +815,6 @@ export default function AdminPortal() {
                 {getFilteredLogs().length === 0 ? (
                   <tr><td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontWeight: '600' }}>No deliveries found for the specified parameters.</td></tr>
                 ) : getFilteredLogs().map((delivery) => {
-                  // 🟢 TIMEOUT WINDOW EXTENDED TO 30 DAYS IN THE FRONTEND UI MATRICES BELOW:
                   const timestamp = new Date(delivery.created_at); 
                   const isEditable = (new Date() - timestamp) <= 30 * 24 * 60 * 60 * 1000;
                   
