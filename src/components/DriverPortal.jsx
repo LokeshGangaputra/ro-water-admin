@@ -2,99 +2,110 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { User, Building2, Calendar, ClipboardCheck, ToggleLeft, ToggleRight, Sun, Moon } from 'lucide-react';
 
-export default function DeliveryForm() {
-  // Database state lists
+const getLocalISODateString = (dateObj) => {
+  const year = dateObj.getFullYear();
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+export default function DriverPortal() {
+  // Option catalogs loaded from cloud
   const [driversList, setDriversList] = useState([]);
   const [companiesList, setCompaniesList] = useState([]);
 
-  // Form input states
+  // Form interactive values states
   const [selectedDriverId, setSelectedDriverId] = useState('');
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [measurementUnit, setMeasurementUnit] = useState('cans'); // 'cans' or 'liters'
   const [inputValue, setInputValue] = useState('');
   const [selectedShift, setSelectedShift] = useState('Morning');
   const [liveTracking, setLiveTracking] = useState(false);
-  const [customEntryDate, setCustomEntryDate] = useState(''); // 🟢 NEW STATE FOR BACKDATING
+  
+  // 🟢 NEW STATE: Pre-filled with today's date automatically
+  const [deliveryLogDate, setDeliveryLogDate] = useState(() => getLocalISODateString(new Date()));
 
-  // Toast notification state
-  const [toast, setToast] = useState('');
-  const showToast = (msg) => {
-    setToast(msg);
-    setTimeout(() => setToast(''), 4000);
+  const [successToast, setSuccessToast] = useState('');
+  const triggerToast = (msg) => {
+    setSuccessToast(msg);
+    setTimeout(() => setSuccessToast(''), 4000);
   };
 
-  // Load Drivers and Clients from Supabase on startup
+  // Pull active system metadata lists
   useEffect(() => {
-    const loadFormOptions = async () => {
-      const { data: drivers } = await supabase.from('drivers').select('*').order('name');
-      const { data: companies } = await supabase.from('companies').select('*').order('name');
+    const loadConfigurationData = async () => {
+      const { data: drivers } = await supabase.from('drivers').select('*').order('name', { ascending: true });
+      const { data: companies } = await supabase.from('companies').select('*').order('name', { ascending: true });
       setDriversList(drivers || []);
       setCompaniesList(companies || []);
     };
-    loadFormOptions();
+    loadConfigurationData();
   }, []);
 
-  // Form submission handler
-  const handleSubmitDeliveryLogs = async (e) => {
+  const handleLogSubmissionEngine = async (e) => {
     e.preventDefault();
 
-    // Validations
-    if (!selectedDriverId) return alert('Please select your name.');
-    if (!selectedCompanyId) return alert('Please select a client destination.');
-    if (!inputValue || parseFloat(inputValue) <= 0) return alert('Please enter a valid quantity.');
+    if (!selectedDriverId) return alert('⚠️ Please select your name from the drop-down list.');
+    if (!selectedCompanyId) return alert('⚠️ Please select the client destination target.');
+    if (!inputValue || parseFloat(inputValue) <= 0) return alert('⚠️ Please input a valid delivery quantity.');
 
-    // Calculate final cans based on the unit selector switch
-    let finalCansCount = parseFloat(inputValue);
+    let operationalCansMath = parseFloat(inputValue);
+    
+    // Convert liters to cans manually if user opted to input raw fluid volume
     if (measurementUnit === 'liters') {
-      // Find company standard container volume multiplier (Default 20L per Can)
-      const matchedCompany = companiesList.find(c => c.id === parseInt(selectedCompanyId));
-      const litersPerCan = matchedCompany?.liters_per_can ? parseInt(matchedCompany.liters_per_can) : 20;
-      finalCansCount = finalCansCount / litersPerCan;
+      const activeClientMeta = companiesList.find(c => c.id === parseInt(selectedCompanyId));
+      const litersPerCanMultiplier = activeClientMeta?.liters_per_can ? parseInt(activeClientMeta.liters_per_can, 10) : 20;
+      operationalCansMath = operationalCansMath / litersPerCanMultiplier;
     }
 
-    // 1. Build Payload
-    const deliveryPayload = {
-      driver_id: parseInt(selectedDriverId),
-      company_id: parseInt(selectedCompanyId),
-      cans_delivered: finalCansCount,
-      shift: selectedShift === 'Morning' ? 'Morning' : 'Evening'
+    // 1. Build Base Database Insertion Payload
+    const logPayload = {
+      driver_id: parseInt(selectedDriverId, 10),
+      company_id: parseInt(selectedCompanyId, 10),
+      cans_delivered: operationalCansMath,
+      shift: selectedShift
     };
 
-    // 2. 🟢 OVERRIDE TIMESTAMP IF CUSTOM DATE IS SELECTED (BACKDATING)
-    if (customEntryDate) {
-      const currentClockTime = new Date().toTimeString().split(' ')[0]; // HH:MM:SS
-      deliveryPayload.created_at = `${customEntryDate}T${currentClockTime}`;
-    }
+    // 2. 🟢 BACKDATE ENGINE TIMESTAMP CALCULATOR
+    // Combines chosen calendar date with current real clock time so metrics sequence chronologically
+    const currentClockTime = new Date().toTimeString().split(' ')[0]; // Returns "HH:MM:SS"
+    logPayload.created_at = `${deliveryLogDate}T${currentClockTime}`;
 
     try {
-      const { error } = await supabase.from('deliveries').insert([deliveryPayload]);
+      const { error } = await supabase.from('deliveries').insert([logPayload]);
       if (error) throw error;
 
-      showToast('🎉 Delivery log submitted successfully!');
+      triggerToast('🎉 Delivery record submitted and synced successfully!');
       
-      // Reset variables
+      // Clear numbers input field safely
       setInputValue('');
-      setCustomEntryDate('');
-    } catch (err) {
-      console.error(err);
-      alert(`Submission error: ${err.message}`);
+      // Keep name and client selected to help speed up quick consecutive additions
+    } catch (dbErr) {
+      console.error("Database submission error context:", dbErr);
+      alert(`Submission Blocked: ${dbErr.message}`);
     }
   };
 
   return (
     <div style={{ display: 'flex', justifyContent: 'center', padding: '24px', backgroundColor: '#f8fafc', minHeight: '100vh', fontFamily: 'system-ui, sans-serif' }}>
       
-      {toast && (
+      {successToast && (
         <div style={{ position: 'fixed', top: '24px', backgroundColor: '#0284c7', color: '#ffffff', padding: '14px 28px', borderRadius: '12px', fontWeight: '700', zIndex: 99999, boxShadow: '0 10px 15px -3px rgba(2,132,199,0.3)' }}>
-          {toast}
+          {successToast}
         </div>
       )}
 
       <div style={{ width: '100%', maxWidth: '480px', backgroundColor: '#ffffff', borderRadius: '24px', padding: '32px', boxShadow: '0 4px 20px rgba(0, 0, 0, 0.05)', border: '1px solid #e2e8f0', height: 'fit-content' }}>
-        <form onSubmit={handleSubmitDeliveryLogs}>
+        
+        <div style={{ marginBottom: '28px' }}>
+          <h2 style={{ margin: '0 0 6px 0', fontSize: '26px', fontWeight: '900', color: '#0f172a' }}>Driver Dispatch Terminal</h2>
+          <p style={{ margin: 0, fontSize: '13px', color: '#64748b', fontWeight: '500' }}>Enter your drops accurately. Backdate below if logging a past missed entry.</p>
+        </div>
+
+        <form onSubmit={handleLogSubmissionEngine}>
           
-          {/* 1. SELECT YOUR NAME */}
-          <div style={{ marginBottom: '24px' }}>
+          {/* 👤 CHOOSE FLEET OPERATOR */}
+          <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: '800', color: '#475569', marginBottom: '8px', letterSpacing: '0.05em' }}>
               <User size={14} style={{ color: '#0284c7' }} /> SELECT YOUR NAME
             </label>
@@ -104,8 +115,8 @@ export default function DeliveryForm() {
             </select>
           </div>
 
-          {/* 2. SELECT CLIENT DESTINATION */}
-          <div style={{ marginBottom: '24px' }}>
+          {/* 🏢 CHOOSE TARGET CLIENT PLACE */}
+          <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: '800', color: '#475569', marginBottom: '8px', letterSpacing: '0.05em' }}>
               <Building2 size={14} style={{ color: '#0284c7' }} /> SELECT CLIENT DESTINATION
             </label>
@@ -115,8 +126,8 @@ export default function DeliveryForm() {
             </select>
           </div>
 
-          {/* 3. CHOOSE MEASUREMENT UNIT */}
-          <div style={{ marginBottom: '24px' }}>
+          {/* 📊 SELECT DISPATCH SCALE UNIT METRIC */}
+          <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'flex', fontSize: '11px', fontWeight: '800', color: '#475569', marginBottom: '8px', letterSpacing: '0.05em' }}>
               CHOOSE MEASUREMENT UNIT
             </label>
@@ -130,8 +141,8 @@ export default function DeliveryForm() {
             </div>
           </div>
 
-          {/* 4. QUANTITY INPUT & SHIFT ROW */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+          {/* 🔢 QUANTITY CAPACITY & OPERATIONAL CYCLE SHIFT SELECTION ROW */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
             <div>
               <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: '800', color: '#475569', marginBottom: '8px', letterSpacing: '0.05em' }}>
                 <ClipboardCheck size={14} style={{ color: '#0284c7' }} /> ENTER TOTAL {measurementUnit.toUpperCase()}
@@ -143,39 +154,39 @@ export default function DeliveryForm() {
                 {selectedShift === 'Morning' ? <Sun size={14} style={{ color: '#f59e0b' }} /> : <Moon size={14} style={{ color: '#6366f1' }} />} SELECT SHIFT
               </label>
               <select value={selectedShift} onChange={e => setSelectedShift(e.target.value)} style={{ width: '100%', padding: '12px 14px', borderRadius: '12px', border: '1px solid #cbd5e1', backgroundColor: '#ffffff', fontWeight: '600', color: '#0f172a', outline: 'none' }}>
-                <option value="Morning">☀️ Morning Shift</option>
-                <option value="Evening">🌙 Evening Shift</option>
+                <option value="Morning">Morning Shift</option>
+                <option value="Evening">Evening Shift</option>
               </select>
             </div>
           </div>
 
-          {/* 5. 🟢 NEW FIELD: BACKDATE MISSING LOG ENTRY SELECTOR */}
-          <div style={{ marginBottom: '24px', backgroundColor: '#f0f9ff', padding: '14px', borderRadius: '14px', border: '1px dashed #bae6fd' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: '800', color: '#0369a1', marginBottom: '6px', letterSpacing: '0.05em' }}>
-              <Calendar size={14} /> SELECT LOG DATE (FOR MISSED ENTRIES)
+          {/* 🟢 NEW FIELD: LOG TARGET ENTRY DATE SELECTOR WINDOW */}
+          <div style={{ marginBottom: '24px', backgroundColor: '#f0f9ff', border: '1px dashed #0ea5e9', padding: '16px', borderRadius: '16px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: '800', color: '#0369a1', marginBottom: '8px', letterSpacing: '0.04em' }}>
+              <Calendar size={14} /> TARGET DELIVERY LOG DATE
             </label>
             <input 
               type="date" 
-              value={customEntryDate} 
-              onChange={e => setCustomEntryDate(e.target.value)} 
-              max={getLocalISODateString(new Date())}
-              style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: '10px', border: '1px solid #cbd5e1', fontWeight: '700', fontSize: '13px', color: '#0369a1', outline: 'none' }} 
+              value={deliveryLogDate} 
+              onChange={e => setDeliveryLogDate(e.target.value)} 
+              max={getLocalISODateString(new Date())} // Locks future date errors completely
+              style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: '10px', border: '1px solid #cbd5e1', fontWeight: '700', fontSize: '14px', color: '#0369a1', outline: 'none', backgroundColor: '#ffffff' }} 
             />
-            <p style={{ margin: '4px 0 0 0', fontSize: '10.5px', color: '#64748b', fontWeight: '500', lineHeight: '1.4' }}>
-              * Leave blank for today. Select a past calendar date to manually record an entry missed on that day.
+            <p style={{ margin: '6px 0 0 0', fontSize: '11px', color: '#64748b', fontWeight: '500', lineHeight: '1.4' }}>
+              * Change this calendar day specifically if you are trying to entry drops that were missed on a past date.
             </p>
           </div>
 
-          {/* 6. START LIVE TRACKING TOGGLE SWITCH */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '14px', marginBottom: '28px', border: '1px solid #e2e8f0' }}>
-            <span style={{ fontSize: '13px', fontWeight: '700', color: '#475569' }}>🚀 Start Live Tracking</span>
-            <div onClick={() => setLiveTracking(!liveTracking)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', color: liveTracking ? '#0284c7' : '#94a3b8', transition: 'all 0.2s' }}>
+          {/* 🚀 TELEMETRY TRACKER TOGGLE SWITCH */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '14px', marginBottom: '24px', border: '1px solid #e2e8f0' }}>
+            <span style={{ fontSize: '13px', fontWeight: '700', color: '#475569' }}>Start Live Tracking</span>
+            <div onClick={() => setLiveTracking(!liveTracking)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', color: liveTracking ? '#0284c7' : '#94a3b8' }}>
               {liveTracking ? <ToggleRight size={36} /> : <ToggleLeft size={36} />}
             </div>
           </div>
 
-          {/* 7. SUBMIT DELIVERY LOGS BUTTON */}
-          <button type="submit" style={{ width: '100%', padding: '16px', border: 'none', borderRadius: '14px', backgroundColor: '#0284c7', color: '#ffffff', fontWeight: '800', fontSize: '15px', cursor: 'pointer', boxShadow: '0 4px 12px rgba(2,132,199,0.2)', transition: 'all 0.2s' }} onMouseEnter={e => e.target.style.backgroundColor = '#0369a1'} onMouseLeave={e => e.target.style.backgroundColor = '#0284c7'}>
+          {/* ⚡ SUBMISSION TRIGGER ACTION */}
+          <button type="submit" style={{ width: '100%', padding: '16px', border: 'none', borderRadius: '14px', backgroundColor: '#0284c7', color: '#ffffff', fontWeight: '800', fontSize: '15px', cursor: 'pointer', boxShadow: '0 4px 12px rgba(2,132,199,0.2)' }}>
             Submit Delivery Logs
           </button>
 
